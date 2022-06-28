@@ -1,0 +1,117 @@
+# -*- coding: utf-8 -*-
+# -------------------------------------------------------------------------------
+# Name:         sfp_Twitch
+# Purpose:      SpiderFoot plug-in for creating new modules.
+#
+# Author:      Jose Mª Pérez Bravo <josemaria1705@hotmail.com>
+#
+# Created:     27/06/2022
+# Copyright:   (c) Jose Mª Pérez Bravo 2022
+# Licence:     GPL
+# -------------------------------------------------------------------------------
+
+import re
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
+
+class sfp_new_module(SpiderFootPlugin):
+
+    meta = {
+        'name': "Twitch",
+        'summary': "Obtención de perfiles, usuarios y localización de estos en Twitch",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Social Media"] ["Passive DNS"]
+    }
+
+    # Default options
+    opts = {
+    }
+
+    # Option descriptions
+    optdescs = {
+    }
+
+    results = None
+
+    def setup(self, sfc, userOpts=dict()):
+        self.sf = sfc
+        self.results = self.tempStorage()
+
+        for opt in list(userOpts.keys()):
+            self.opts[opt] = userOpts[opt]
+
+    # What events is this module interested in for input
+    def watchedEvents(self):
+        return ["SOCIAL_MEDIA"]
+
+    # What events this module produces
+    # This is to support the end user in selecting modules based on events
+    # produced.
+    def producedEvents(self):
+        return ["GEOINFO", "RAW_RIR_DATA"]
+
+    # Handle events sent to this module
+    def handleEvent(self, event):
+        eventName = event.eventType
+        srcModuleName = event.module
+        eventData = event.data
+
+        if eventData in self.results:
+            return
+
+        self.results[eventData] = True
+
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
+
+#Obtener perfil
+
+        try:
+            network = eventData.split(": ")[0]
+            url = eventData.split(": ")[1].replace("<SFURL>", "").replace("</SFURL>", "")
+        except Exception as evt:
+            self.debug(f"Unable to parse SOCIAL_MEDIA: {eventData} ({evt}")
+            return
+        
+        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
+                                useragent='Spiderfoot')
+        
+        if res['content'] is None:
+            return
+            
+
+#Obtener nombre
+
+        nombre_humano = re.findall(r'<div class="fullname">([^<]+)\s*</div>',
+                                str(res['content']), re.MULTILINE)
+
+        if nombre_humano:
+            evt = SpiderFootEvent("RAW_RIR_DATA", "Possible full name: " + nombre_humano[0],
+                                self.__name__, event)
+
+            self.notifyListeners(evt)
+
+            self.sf.debug(f"We use the data: {eventData}")
+            print(f"We use the data: {eventData}")
+
+            if not nombre_humano:
+                self.sf.error("Unable to perform <ACTION MODULE> on " + eventData)
+                return
+
+#obtener localización    
+        localizacion = re.findall(r'<div class="location">([^<]+)</div>', res['content'])
+
+        if localizacion:   
+            if len(localizacion[0]) < 3 or len(localizacion[0]) > 100:
+                self.debug("Skipping likely invalid location.")
+            else:
+                evt = SpiderFootEvent("GEOINFO", localizacion[0], self.__name__, event)
+                self.notifyListeners(evt)
+
+
+
+        self.notifyListeners(evt)
+
+
+# fim
